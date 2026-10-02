@@ -1,0 +1,69 @@
+# Partner hosting stack — one shared droplet. See ../build-plan.md.
+# cloudflared (tunnel, outbound-only) -> front-nginx (host routing) -> per-site nginx:alpine containers.
+# Static files are built on partners-box, pulled to /srv/sites/<slug>/current, served read-only.
+# Image tags are pinned in build-plan.md "As-built" once verified on the droplet.
+name: partner-stack
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # Dashboard-managed tunnel: ingress (hostname -> http://front-nginx:80) is set in the CF
+      # Zero Trust dashboard. Token from Vault `Partners · Cloudflare Tunnel`.
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?set TUNNEL_TOKEN}
+    networks: [partnernet]
+    depends_on: [front-nginx]
+
+  front-nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./front-nginx/conf.d:/etc/nginx/conf.d:ro
+      - /srv/logs:/var/log/nginx        # access logs on the host, for GoAccess reports
+    networks: [partnernet]
+
+  # --- one per partner (added at onboarding from site.template) ---
+  site-s-and-w-pool-distributors:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - /srv/sites/s-and-w-pool-distributors/current:/usr/share/nginx/html:ro
+      - ./site-nginx/default.conf:/etc/nginx/conf.d/default.conf:ro   # clean URLs, no scheme-downgrading 301
+    networks: [partnernet]
+
+  # --- staging site (static + /review.html), served on staging.<domain> behind Cloudflare Access.
+  #     Content pulled from deploy/<slug>-staging into /srv/sites/<slug>-staging/current. ---
+  site-s-and-w-pool-distributors-staging:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - /srv/sites/s-and-w-pool-distributors-staging/current:/usr/share/nginx/html:ro
+      - ./site-nginx/default.conf:/etc/nginx/conf.d/default.conf:ro   # clean URLs, no scheme-downgrading 301
+    networks: [partnernet]
+
+  # --- review sidecar: ONE container serves every partner's staging review tool (keys its comment
+  #     store per-host). front-nginx proxies staging.<domain>/api/* here. Reachable only via the tunnel. ---
+  review-sidecar:
+    image: node:22-alpine
+    restart: unless-stopped
+    command: ["node", "/app/server.mjs"]
+    environment:
+      - HOST=0.0.0.0
+      - PORT=4321
+      - REVIEW_STORE_DIR=/var/lib/review-tool
+    volumes:
+      - ./review-sidecar:/app:ro
+      - review-store:/var/lib/review-tool     # comments persist across redeploys
+    networks: [partnernet]
+
+  # Analytics: NO container. GoAccess parses /srv/logs/partner-access.log offline into per-site
+  # reports (scripts/monthly-report.sh) — see build-plan.md. Nothing on partner pages, no domain.
+
+networks:
+  partnernet:
+    driver: bridge
+
+volumes:
+  review-store:

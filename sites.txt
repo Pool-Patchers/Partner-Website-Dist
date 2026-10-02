@@ -1,0 +1,4 @@
+# Partner site slugs, one per line. The droplet's pull timer syncs each slug's built files from
+# Partner-Website-Dist branch deploy/<slug> into /srv/sites/<slug>/current. Lines starting with # ignored.
+s-and-w-pool-distributors
+s-and-w-pool-distributors-staging

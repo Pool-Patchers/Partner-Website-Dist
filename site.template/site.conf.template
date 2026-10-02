@@ -1,0 +1,26 @@
+# Front-nginx routing block TEMPLATE for one partner. At onboarding, render this with the partner's
+# real {{DOMAIN}} + {{SLUG}} into infra/front-nginx/conf.d/<slug>.conf (NEVER leave {{...}} literals —
+# the braces crash nginx). TLS terminates at Cloudflare; tunnel->front-nginx->site hops are plain HTTP.
+
+server {
+    listen 80;
+    server_name www.{{DOMAIN}};
+    return 301 https://{{DOMAIN}}$request_uri;   # www -> apex
+}
+
+server {
+    listen 80;
+    server_name {{DOMAIN}};
+
+    add_header X-Content-Type-Options   "nosniff" always;
+    add_header X-Frame-Options          "SAMEORIGIN" always;
+    add_header Referrer-Policy          "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://site-{{SLUG}}:80;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
